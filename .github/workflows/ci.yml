@@ -5,7 +5,7 @@ on:
     branches:
       - main
   pull_request:
-  workflow_dispatch:
+  workflow_dispatch:  # 允许手动触发
 
 jobs:
   lint:
@@ -13,6 +13,8 @@ jobs:
     steps:
       - name: Checkout last commit
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # 获取完整历史记录，确保能找到 data 目录
       - name: Install clang-format
         run: sudo apt install -y clang-format curl
       - name: Lint
@@ -27,10 +29,11 @@ jobs:
         with:
           repository: rime/librime
 
-      - name: Checkout last commit
+      - name: Checkout current repository with full history
         uses: actions/checkout@v4
         with:
           path: plugins/predict
+          fetch-depth: 0  # 获取完整历史记录
 
       - name: Install dependency
         run: ./action-install-linux.sh
@@ -40,33 +43,53 @@ jobs:
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DENABLE_ASAN=ON
           cmake --build build
 
-      - name: Build predict.db
+      - name: Build predict.db from local data
         working-directory: build/bin
         run: |
-
-          wget -O predict.txt https://github.com/XiHanQWQ/librime-predict/tree/master/data/predict.txt
-          # wget -O release.db https://github.com/rime/librime-predict/releases/download/data-1.0/predict.db
+          # 从本仓库的 data 目录复制 predict.txt
+          cp ../../plugins/predict/data/predict.txt ./
           cat predict.txt | ../plugins/predict/bin/build_predict
-          # diff predict.db release.db
+          ls -la predict.db  # 确认文件生成
 
-      - name: Create directory and move predict.db
-        run: |
-          mkdir -p /home/runner/work/librime-predict/librime-predict/build/bin/artifact
-          mv /home/runner/work/librime-predict/librime-predict/build/bin/predict.db /home/runner/work/librime-predict/librime-predict/build/bin/artifact/
+      - name: Create release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: predict-db-${{ github.run_id }}-${{ github.run_attempt }}
+          release_name: Predict DB (${{ github.sha }})
+          draft: false
+          prerelease: false
+          body: |
+            Auto-generated predict.db from CI build
+            - Commit: ${{ github.sha }}
+            - Run ID: ${{ github.run_id }}
 
-      - name: Set current time
-        id: current-time
-        run: echo "CURRENT_TIME=$(date '+%Y%m%d%H%M%S')" >> $GITHUB_ENV
+      - name: Upload predict.db to release
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: build/bin/predict.db
+          asset_name: predict.db
+          asset_content_type: application/octet-stream
 
-      - name: Create release directory
-        run: mkdir -p /home/runner/work/librime-predict/librime-predict/build/bin/release
+      - name: Upload predict.txt to release
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: build/bin/predict.txt
+          asset_name: predict.txt
+          asset_content_type: text/plain
 
-      - name: Move artifact to release directory
-        run: mv /home/runner/work/librime-predict/librime-predict/build/bin/artifact /home/runner/work/librime-predict/librime-predict/build/bin/release/librime-predict.db_${{ env.CURRENT_TIME }}
-
-      - name: Upload Release
-        # 打包上传生成的文件
+      - name: Upload Artifact (backup)
         uses: actions/upload-artifact@v4
         with:
-          name: "librime-predict.db_${{ env.CURRENT_TIME }}"
-          path: /home/runner/work/librime-predict/librime-predict/build/bin/release
+          name: predict-db-${{ github.run_id }}
+          path: |
+            build/bin/predict.db
+            build/bin/predict.txt
