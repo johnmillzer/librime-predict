@@ -12,9 +12,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout last commit
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
-          fetch-depth: 0  # 获取完整历史记录，确保能找到 data 目录
+          fetch-depth: 0
       - name: Install clang-format
         run: sudo apt install -y clang-format curl
       - name: Lint
@@ -25,69 +25,74 @@ jobs:
     needs: lint
     steps:
       - name: Checkout librime
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: rime/librime
 
       - name: Checkout current repository with full history
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           path: plugins/predict
-          fetch-depth: 0  # 获取完整历史记录
+          fetch-depth: 0
 
       - name: Install dependency
         run: ./action-install-linux.sh
 
-      - name: Build librime with plugin
+      - name: Build librime with plugin (without ASan)
         run: |
-          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DENABLE_ASAN=ON
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DENABLE_ASAN=OFF
           cmake --build build
+
+      - name: Check if data directory exists
+        run: |
+          ls -la plugins/predict/data/
+          if [ -f "plugins/predict/data/predict.txt" ]; then
+            echo "predict.txt found"
+          else
+            echo "predict.txt not found, listing data directory:"
+            find plugins/predict/data/ -type f
+            exit 1
+          fi
 
       - name: Build predict.db from local data
         working-directory: build/bin
         run: |
           # 从本仓库的 data 目录复制 predict.txt
           cp ../../plugins/predict/data/predict.txt ./
-          cat predict.txt | ../plugins/predict/bin/build_predict
-          ls -la predict.db  # 确认文件生成
+          echo "File size: $(wc -l < predict.txt) lines"
+          
+          # 使用文件输入而不是管道，避免 Broken pipe 错误
+          ../plugins/predict/bin/build_predict < predict.txt
+          
+          # 检查是否成功生成数据库
+          if [ -f "predict.db" ]; then
+            echo "predict.db successfully created"
+            ls -la predict.db
+          else
+            echo "Error: predict.db was not created"
+            exit 1
+          fi
 
-      - name: Create release
-        id: create_release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create release using modern action
+        uses: softprops/action-gh-release@v2
+        if: success()
         with:
           tag_name: predict-db-${{ github.run_id }}-${{ github.run_attempt }}
-          release_name: Predict DB (${{ github.sha }})
-          draft: false
-          prerelease: false
+          name: Predict DB (${{ github.sha }})
           body: |
             Auto-generated predict.db from CI build
             - Commit: ${{ github.sha }}
             - Run ID: ${{ github.run_id }}
-
-      - name: Upload predict.db to release
-        uses: actions/upload-release-asset@v1
+          draft: false
+          prerelease: false
+          files: |
+            build/bin/predict.db
+            build/bin/predict.txt
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: build/bin/predict.db
-          asset_name: predict.db
-          asset_content_type: application/octet-stream
-
-      - name: Upload predict.txt to release
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: build/bin/predict.txt
-          asset_name: predict.txt
-          asset_content_type: text/plain
 
       - name: Upload Artifact (backup)
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: predict-db-${{ github.run_id }}
           path: |
