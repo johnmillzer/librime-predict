@@ -63,16 +63,15 @@ jobs:
             cp ../../plugins/predict/data/$txt_file.txt ./
             echo "File size: $(wc -l < $txt_file.txt) lines"
             
-            # 构建db文件
-            ../plugins/predict/bin/build_predict < $txt_file.txt
+            # 构建db文件（直接输出到目标文件名）
+            ../plugins/predict/bin/build_predict < $txt_file.txt > "$txt_file.db" 2>&1
             
-            # 重命名生成的predict.db为对应的名称
-            if [ -f "predict.db" ]; then
-              mv predict.db $txt_file.db
+            # 检查是否成功生成db文件
+            if [ -f "$txt_file.db" ]; then
               echo "Successfully created $txt_file.db"
-              ls -la $txt_file.db
+              ls -la "$txt_file.db"
             else
-              echo "Error: predict.db was not created for $txt_file.txt"
+              echo "Error: $txt_file.db was not created"
               exit 1
             fi
           done
