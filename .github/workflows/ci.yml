@@ -75,14 +75,14 @@ jobs:
           echo "Date: $(date)" >> dist/${{ matrix.build-type }}/build-info.txt
           
           # 创建压缩包
-          tar -czf librime-predict-${{ matrix.build-type }}-${{ github.sha:0:8 }}.tar.gz -C dist/${{ matrix.build-type }} .
+          tar -czf librime-predict-${{ matrix.build-type }}-${GITHUB_SHA:0:8}.tar.gz -C dist/${{ matrix.build-type }} .
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: librime-predict-${{ matrix.build-type }}-${{ github.sha:0:8 }}
+          name: librime-predict-${{ matrix.build-type }}-${GITHUB_SHA:0:8}
           path: |
-            librime-predict-${{ matrix.build-type }}-${{ github.sha:0:8 }}.tar.gz
+            librime-predict-${{ matrix.build-type }}-${GITHUB_SHA:0:8}.tar.gz
             build-${{ matrix.build-type }}/bin/predict.db
           retention-days: 30
 
@@ -102,12 +102,22 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: build-${{ github.run_id }}
-          name: "Build ${{ github.run_id }} (${{ github.sha:0:8 }})"
+          tag_name: build-${GITHUB_SHA:0:8}
+          name: "Build ${GITHUB_SHA:0:8}"
           body: |
             Automated build of librime with predict plugin
             - Commit: ${{ github.sha }}
             - Build ID: ${{ github.run_id }}
+            - Date: ${{ github.event.head_commit.timestamp }}
+          draft: false
+          prerelease: true
+          files: |
+            artifacts/**/*.tar.gz
+            artifacts/**/predict.db
+
+      - name: Display release info
+        run: |
+          echo "Release created at: ${{ steps.create_release.outputs.upload_url }}"            - Build ID: ${{ github.run_id }}
             - Date: ${{ github.event.head_commit.timestamp }}
           draft: false
           prerelease: true
