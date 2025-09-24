@@ -43,51 +43,56 @@ jobs:
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DENABLE_ASAN=OFF
           cmake --build build
 
-      - name: Check if data directory exists
+      - name: Check data directory and list txt files
+        id: check_data
         run: |
           ls -la plugins/predict/data/
-          if [ -f "plugins/predict/data/predict.txt" ]; then
-            echo "predict.txt found"
-          else
-            echo "predict.txt not found, listing data directory:"
-            find plugins/predict/data/ -type f
-            exit 1
-          fi
+          # 查找所有txt文件并输出为空格分隔的列表
+          TXT_FILES=$(find plugins/predict/data -name "*.txt" -type f -exec basename {} .txt \; | tr '\n' ' ')
+          echo "Found TXT files: $TXT_FILES"
+          # 设置输出变量供后续步骤使用
+          echo "txt_files=$TXT_FILES" >> $GITHUB_OUTPUT
 
-      - name: Build predict.db from local data
+      - name: Build db files from all txt files in data directory
         working-directory: build/bin
         run: |
-          # 从本仓库的 data 目录复制 predict.txt
-          cp ../../plugins/predict/data/predict.txt ./
-          echo "File size: $(wc -l < predict.txt) lines"
-          
-          # 使用文件输入而不是管道，避免 Broken pipe 错误
-          ../plugins/predict/bin/build_predict < predict.txt
-          
-          # 检查是否成功生成数据库
-          if [ -f "predict.db" ]; then
-            echo "predict.db successfully created"
-            ls -la predict.db
-          else
-            echo "Error: predict.db was not created"
-            exit 1
-          fi
+          # 为每个txt文件构建对应的db文件
+          for txt_file in ${{ steps.check_data.outputs.txt_files }}; do
+            echo "Processing $txt_file.txt -> $txt_file.db"
+            # 复制txt文件
+            cp ../../plugins/predict/data/$txt_file.txt ./
+            echo "File size: $(wc -l < $txt_file.txt) lines"
+            
+            # 构建db文件
+            ../plugins/predict/bin/build_predict < $txt_file.txt
+            
+            # 重命名生成的predict.db为对应的名称
+            if [ -f "predict.db" ]; then
+              mv predict.db $txt_file.db
+              echo "Successfully created $txt_file.db"
+              ls -la $txt_file.db
+            else
+              echo "Error: predict.db was not created for $txt_file.txt"
+              exit 1
+            fi
+          done
 
-      - name: Create release using modern action
+      - name: Create release with all db files
         uses: softprops/action-gh-release@v2
         if: success()
         with:
           tag_name: predict-db-${{ github.run_id }}-${{ github.run_attempt }}
           name: Predict DB (${{ github.sha }})
           body: |
-            Auto-generated predict.db from CI build
+            Auto-generated predict database files from CI build
             - Commit: ${{ github.sha }}
             - Run ID: ${{ github.run_id }}
+            - Generated files: ${{ steps.check_data.outputs.txt_files }}
           draft: false
           prerelease: false
           files: |
-            build/bin/predict.db
-            build/bin/predict.txt
+            build/bin/*.db
+            build/bin/*.txt
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -96,6 +101,6 @@ jobs:
         with:
           name: predict-db-${{ github.run_id }}
           path: |
-            build/bin/predict.db
-            build/bin/predict.txt
-          retention-days: 30
+            build/bin/*.db
+            build/bin/*.txt
+          # 移除了 retention-days: 30
