@@ -58,22 +58,35 @@ jobs:
         run: |
           # 为每个txt文件构建对应的db文件
           for txt_file in ${{ steps.check_data.outputs.txt_files }}; do
-            echo "Processing $txt_file.txt -> $txt_file.db"
+            echo "Processing $txt_file.txt -> ${txt_file}.db"
+            # 删除可能存在的残留文件（确保干净）
+            rm -f predict.db
+            
             # 复制txt文件
-            cp ../../plugins/predict/data/$txt_file.txt ./
-            echo "File size: $(wc -l < $txt_file.txt) lines"
+            cp ../../plugins/predict/data/${txt_file}.txt ./
+            echo "File size: $(wc -l < ${txt_file}.txt) lines"
             
-            # 构建db文件（直接输出到目标文件名）
-            ../plugins/predict/bin/build_predict < $txt_file.txt > "$txt_file.db" 2>&1
+            # 构建db文件
+            ../plugins/predict/bin/build_predict < ${txt_file}.txt
             
-            # 检查是否成功生成db文件
-            if [ -f "$txt_file.db" ]; then
-              echo "Successfully created $txt_file.db"
-              ls -la "$txt_file.db"
-            else
-              echo "Error: $txt_file.db was not created"
+            # 检查生成的文件
+            if [ ! -f "predict.db" ]; then
+              echo "Error: predict.db was not created for ${txt_file}.txt"
               exit 1
             fi
+            
+            # 重命名逻辑：仅当目标文件名与当前文件名不同时才重命名
+            target_file="${txt_file}.db"
+            if [ "$target_file" != "predict.db" ]; then
+              mv predict.db "$target_file"
+              echo "Successfully created $target_file"
+            else
+              echo "Skipping rename (already named $target_file)"
+              # 重命名后文件名已经是目标名，直接使用
+              mv predict.db "$target_file"  # 实际上不需要执行，但为了代码一致性保留
+            fi
+            
+            ls -la "$target_file"
           done
 
       - name: Create release with all db files
