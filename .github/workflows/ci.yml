@@ -6,6 +6,8 @@ on:
       - main
   pull_request:
   workflow_dispatch:  # 允许手动触发
+  release:
+    types: [published]  # 当创建发布时触发
 
 jobs:
   lint:
@@ -14,7 +16,7 @@ jobs:
       - name: Checkout last commit
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # 获取完整历史记录，确保能找到 data 目录
+          fetch-depth: 0
       - name: Install clang-format
         run: sudo apt install -y clang-format curl
       - name: Lint
@@ -23,6 +25,9 @@ jobs:
   build:
     runs-on: ubuntu-24.04
     needs: lint
+    strategy:
+      matrix:
+        build-type: [Release, Debug]
     steps:
       - name: Checkout librime
         uses: actions/checkout@v4
@@ -33,63 +38,83 @@ jobs:
         uses: actions/checkout@v4
         with:
           path: plugins/predict
-          fetch-depth: 0  # 获取完整历史记录
+          fetch-depth: 0
 
       - name: Install dependency
         run: ./action-install-linux.sh
 
       - name: Build librime with plugin
         run: |
-          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DENABLE_ASAN=ON
-          cmake --build build
+          cmake -B build-${{ matrix.build-type }} -G Ninja -DCMAKE_BUILD_TYPE=${{ matrix.build-type }} -DENABLE_ASAN=ON
+          cmake --build build-${{ matrix.build-type }}
+        env:
+          CC: clang
+          CXX: clang++
 
       - name: Build predict.db from local data
-        working-directory: build/bin
+        working-directory: build-${{ matrix.build-type }}/bin
         run: |
-          # 从本仓库的 data 目录复制 predict.txt
           cp ../../plugins/predict/data/predict.txt ./
           cat predict.txt | ../plugins/predict/bin/build_predict
-          ls -la predict.db  # 确认文件生成
+          ls -la predict.db
 
-      - name: Create release
-        id: create_release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: predict-db-${{ github.run_id }}-${{ github.run_attempt }}
-          release_name: Predict DB (${{ github.sha }})
-          draft: false
-          prerelease: false
-          body: |
-            Auto-generated predict.db from CI build
-            - Commit: ${{ github.sha }}
-            - Run ID: ${{ github.run_id }}
+      - name: Package build artifacts
+        run: |
+          mkdir -p dist/${{ matrix.build-type }}
+          # 打包 librime 核心文件
+          cp -r build-${{ matrix.build-type }}/bin dist/${{ matrix.build-type }}/
+          cp -r build-${{ matrix.build-type }}/lib dist/${{ matrix.build-type }}/
+          # 打包插件相关文件
+          mkdir -p dist/${{ matrix.build-type }}/plugins/predict
+          cp -r plugins/predict/data dist/${{ matrix.build-type }}/plugins/predict/
+          cp build-${{ matrix.build-type }}/plugins/predict/*.so dist/${{ matrix.build-type }}/plugins/predict/ 2>/dev/null || true
+          
+          # 创建版本信息文件
+          echo "Build Type: ${{ matrix.build-type }}" > dist/${{ matrix.build-type }}/build-info.txt
+          echo "Commit: ${{ github.sha }}" >> dist/${{ matrix.build-type }}/build-info.txt
+          echo "Date: $(date)" >> dist/${{ matrix.build-type }}/build-info.txt
+          
+          # 创建压缩包
+          tar -czf librime-predict-${{ matrix.build-type }}-${{ github.sha:0:8 }}.tar.gz -C dist/${{ matrix.build-type }} .
 
-      - name: Upload predict.db to release
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: build/bin/predict.db
-          asset_name: predict.db
-          asset_content_type: application/octet-stream
-
-      - name: Upload predict.txt to release
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: build/bin/predict.txt
-          asset_name: predict.txt
-          asset_content_type: text/plain
-
-      - name: Upload Artifact (backup)
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: predict-db-${{ github.run_id }}
+          name: librime-predict-${{ matrix.build-type }}-${{ github.sha:0:8 }}
           path: |
-            build/bin/predict.db
-            build/bin/predict.txt
+            librime-predict-${{ matrix.build-type }}-${{ github.sha:0:8 }}.tar.gz
+            build-${{ matrix.build-type }}/bin/predict.db
+          retention-days: 30
+
+  release:
+    runs-on: ubuntu-24.04
+    needs: build
+    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create Release
+        id: create_release
+        uses: softprops/action-gh-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: build-${{ github.run_id }}
+          name: "Build ${{ github.run_id }} (${{ github.sha:0:8 }})"
+          body: |
+            Automated build of librime with predict plugin
+            - Commit: ${{ github.sha }}
+            - Build ID: ${{ github.run_id }}
+            - Date: ${{ github.event.head_commit.timestamp }}
+          draft: false
+          prerelease: true
+          files: |
+            artifacts/**/*.tar.gz
+            artifacts/**/predict.db
+
+      - name: Display release info
+        run: |
+          echo "Release created at: ${{ steps.create_release.outputs.upload_url }}"
