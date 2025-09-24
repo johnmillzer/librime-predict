@@ -97,18 +97,17 @@ jobs:
           echo "Commit: ${{ github.sha }}" >> dist/${{ matrix.build-type }}/build-info.txt
           echo "Date: $(date)" >> dist/${{ matrix.build-type }}/build-info.txt
           
-          # 创建压缩包 - 使用环境变量获取SHA前8位
-          tar -czf librime-predict-${{ matrix.build-type }}-${GITHUB_SHA:0:8}.tar.gz -C dist/${{ matrix.build-type }} .
+          # 创建压缩包 - 使用运行ID作为唯一标识
+          tar -czf librime-predict-${{ matrix.build-type }}-${{ github.run_id }}.tar.gz -C dist/${{ matrix.build-type }} .
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          # 使用表达式语法而不是Shell变量语法
-          name: librime-predict-${{ matrix.build-type }}-${{ github.sha && github.sha.substring(0, 8) }}
+          # 使用运行ID作为唯一标识
+          name: librime-predict-${{ matrix.build-type }}-${{ github.run_id }}
           path: |
-            librime-predict-${{ matrix.build-type }}-${GITHUB_SHA:0:8}.tar.gz
+            librime-predict-${{ matrix.build-type }}-${{ github.run_id }}.tar.gz
             build-${{ matrix.build-type }}/bin/predict.db
-          retention-days: 30
           if-no-files-found: warn
           compression-level: 6
           overwrite: false
@@ -132,9 +131,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          # 使用表达式语法而不是Shell变量语法
-          tag_name: build-${{ github.sha && github.sha.substring(0, 8) }}
-          name: "Build ${{ github.sha && github.sha.substring(0, 8) }}"
+          # 使用运行ID作为标签
+          tag_name: build-${{ github.run_id }}
+          name: "Build ${{ github.run_id }}"
           body: |
             Automated build of librime with predict plugin
             - Commit: ${{ github.sha }}
